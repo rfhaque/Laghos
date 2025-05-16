@@ -911,10 +911,13 @@ int main(int argc, char *argv[])
 #ifdef USE_CALIPER
    adiak::fini();
 #endif
+   Hypre::Finalize();
 
    // Free the used memory.
    delete ode_solver;
    delete pmesh;
+
+   MPI_Finalize();
 
    return 0;
 }
