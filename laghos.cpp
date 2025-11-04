@@ -249,7 +249,8 @@ int main(int argc, char *argv[])
    const char * allocator_name = "laghos_device_alloc";
    size_t umpire_dev_pool_size = ((size_t) dev_pool_size) * 1024 * 1024 * 1024;
    size_t umpire_dev_block_size = 512;
-   rm.makeAllocator<umpire::strategy::QuickPool>(allocator_name, rm.getAllocator("DEVICE"), umpire_dev_pool_size, umpire_dev_block_size);
+   //rm.makeAllocator<umpire::strategy::QuickPool>(allocator_name, rm.getAllocator("DEVICE"), umpire_dev_pool_size, umpire_dev_block_size);
+   rm.makeAllocator<umpire::strategy::QuickPool>(allocator_name, rm.getAllocator("DEVICE"));
 
 #ifdef HYPRE_USING_UMPIRE
    HYPRE_SetUmpireDevicePoolName(allocator_name);
