@@ -265,8 +265,8 @@ int main(int argc, char *argv[])
    // Configure the device from the command line options
    Device backend;
    backend.Configure(device, dev);
-   if (Mpi::Root()) { backend.Print(); }
    backend.SetGPUAwareMPI(gpu_aware_mpi);
+   if (Mpi::Root()) { backend.Print(); }
 
    // On all processors, use the default builtin 1D/2D/3D mesh or read the
    // serial one given on the command line.
