@@ -135,7 +135,6 @@ int main(int argc, char *argv[])
    bool fom = false;
    bool gpu_aware_mpi = false;
    int dev = 0;
-   int dev_pool_size = 4;
    double blast_energy = 0.25;
    double blast_position[] = {0.0, 0.0, 0.0};
 
@@ -215,8 +214,6 @@ int main(int argc, char *argv[])
                   "Enable figure of merit output.");
    args.AddOption(&gpu_aware_mpi, "-gam", "--gpu-aware-mpi", "-no-gam",
                   "--no-gpu-aware-mpi", "Enable GPU aware MPI communications.");
-   args.AddOption(&dev_pool_size, "-pool", "--dev-pool-size",
-                  "Size (in GB) for the umpire device pool");
    args.AddOption(&enable_nc, "-nc", "--nonconforming", "-no-nc",
                   "--conforming",
                   "Use non-conforming meshes. Requires a 2D or 3D mesh.");
@@ -247,9 +244,7 @@ int main(int argc, char *argv[])
 #ifdef LAGHOS_USE_DEVICE_UMPIRE
    auto &rm = umpire::ResourceManager::getInstance();
    const char * allocator_name = "laghos_device_alloc";
-   size_t umpire_dev_pool_size = ((size_t) dev_pool_size) * 1024 * 1024 * 1024;
-   size_t umpire_dev_block_size = 1024 * 1024;
-   rm.makeAllocator<umpire::strategy::QuickPool>(allocator_name, rm.getAllocator("DEVICE"), umpire_dev_pool_size, umpire_dev_block_size);
+   rm.makeAllocator<umpire::strategy::QuickPool>(allocator_name, rm.getAllocator("DEVICE"));
 
 #ifdef HYPRE_USING_UMPIRE
    HYPRE_SetUmpireDevicePoolName(allocator_name);
@@ -265,8 +260,8 @@ int main(int argc, char *argv[])
    // Configure the device from the command line options
    Device backend;
    backend.Configure(device, dev);
-   backend.SetGPUAwareMPI(gpu_aware_mpi);
    if (Mpi::Root()) { backend.Print(); }
+   backend.SetGPUAwareMPI(gpu_aware_mpi);
 
    // On all processors, use the default builtin 1D/2D/3D mesh or read the
    // serial one given on the command line.
