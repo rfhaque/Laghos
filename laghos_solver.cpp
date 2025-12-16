@@ -19,6 +19,10 @@
 #include "linalg/kernels.hpp"
 #include <unordered_map>
 
+#ifdef USE_CALIPER
+#include <adiak.hpp>
+#endif
+
 #ifdef MFEM_USE_MPI
 
 // for benchmark timing purposes; for a regular run this can be a no-op
@@ -750,6 +754,22 @@ void LagrangianHydroOperator::PrintTimingData(bool IamRoot, int steps,
            << "| " << setw(7) << FOM
            << "| " << setw(5) << T[4]
            << "| " << endl;
+#ifdef USE_CALIPER
+      adiak::value("zones", GNZones);
+      adiak::value("h1_dofs", H1GTVSize);
+      adiak::value("l2_dofs", L2GTVSize);
+      adiak::value("qp", QPT);
+      adiak::value("n_dofs", ndofs);
+      adiak::value("fom0", FOM0);
+      adiak::value("fom1", FOM1);
+      adiak::value("t1", T[0]);
+      adiak::value("fom2", FOM2);
+      adiak::value("t2", T[2]);
+      adiak::value("fom3", FOM3);
+      adiak::value("t3", T[3]);
+      adiak::value("fom4", FOM);
+      adiak::value("tt", T[4]);
+#endif
    }
 }
 
