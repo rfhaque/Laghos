@@ -202,6 +202,8 @@ public:
    const Array<int> &GetBlockOffsets() const { return block_offsets; }
 
    void PrintTimingData(bool IamRoot, int steps, const bool fom) const;
+
+   void DumpAllReduceTimings(std::ostream &out) const;
 };
 
 // TaylorCoefficient used in the 2D Taylor-Green problem.

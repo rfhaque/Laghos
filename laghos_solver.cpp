@@ -274,6 +274,8 @@ LagrangianHydroOperator::LagrangianHydroOperator(const int size,
       CG_VMass.SetAbsTol(0.0);
       CG_VMass.SetMaxIter(cg_max_iter);
       CG_VMass.SetPrintLevel(-1);
+      CG_VMass.track_allreduce = true;
+      CG_VMass.time_points.reserve(10000000);
 
       CG_EMass.SetOperator(*EMassPA);
       CG_EMass.iterative_mode = false;
@@ -1422,6 +1424,16 @@ void LagrangianHydroOperator::AssembleForceMatrix() const
    LAGHOS_CALI_MARK_END("LagrangianHydroOperator-AssembleForceMatrix");
    timer.sw_force.Stop();
    forcemat_is_assembled = true;
+}
+
+void LagrangianHydroOperator::DumpAllReduceTimings(std::ostream& out) const
+{
+  for (auto &v : CG_VMass.time_points) {
+    out << std::chrono::duration_cast<std::chrono::nanoseconds>(
+               v - CG_VMass.time_points[0])
+               .count()
+        << std::endl;
+  }
 }
 
 } // namespace hydrodynamics
