@@ -383,7 +383,6 @@ void LagrangianHydroOperator::SolveVelocity(const Vector &S,
          VMassPA->SetEssentialTrueDofs(c_tdofs[c]);
          VMassPA->EliminateRHS(B);
          LAGHOS_DEVICE_SYNC;
-         //MPI_Barrier(H1.GetParMesh()->GetComm());
          timer.sw_cgH1.Start();
          LAGHOS_CALI_MARK_BEGIN("SolveVelocity-CGVMass");
          CG_VMass.Mult(B, X);
@@ -477,7 +476,6 @@ void LagrangianHydroOperator::SolveEnergy(const Vector &S, const Vector &v,
       timer.sw_force.Stop();
       if (e_source) { e_rhs += *e_source; }
       LAGHOS_DEVICE_SYNC;
-      //MPI_Barrier(L2.GetParMesh()->GetComm());
       timer.sw_cgL2.Start();
       LAGHOS_CALI_MARK_BEGIN("SolveEnergy-CGEMass");
       CG_EMass.Mult(e_rhs, de);
