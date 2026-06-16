@@ -15,6 +15,7 @@
 // testbed platforms, in support of the nation's exascale computing imperative.
 
 #include "laghos_solver.hpp"
+#include <cstdlib>
 
 #ifdef MFEM_USE_MPI
 
@@ -120,8 +121,12 @@ LagrangianHydroOperator::LagrangianHydroOperator(int size,
      quad_data_is_current(false),
      Force(&l2_fes, &h1_fes), ForcePA(&quad_data, h1_fes, l2_fes),
      VMassPA(&quad_data, H1FESpace), locEMassPA(&quad_data, l2_fes),
-     locCG(), timer()
+     locCG(), timer(),
+     allreduce_double_buf(static_cast<double*>(std::malloc(2 * sizeof(double)))),
+     allreduce_int_buf(static_cast<int*>(std::malloc(2 * sizeof(int))))
 {
+   MFEM_VERIFY(allreduce_double_buf != NULL && allreduce_int_buf != NULL,
+               "Failed to allocate MPI_Allreduce scratch buffers.");
    // Standard local assembly and inversion for energy mass matrices.
    DenseMatrix Me(l2dofs_cnt);
    DenseMatrixInverse inv(&Me);
@@ -164,24 +169,36 @@ LagrangianHydroOperator::LagrangianHydroOperator(int size,
    x0_gf = *(h1_fes.GetMesh()->GetNodes());
 
    // Initial local mesh size (assumes all mesh elements are of the same type).
-   double loc_area = 0.0, glob_area;
-   int loc_z_cnt = nzones, glob_z_cnt;
    ParMesh *pm = H1FESpace.GetParMesh();
-   for (int i = 0; i < nzones; i++) { loc_area += pm->GetElementVolume(i); }
-   MPI_Allreduce(&loc_area, &glob_area, 1, MPI_DOUBLE, MPI_SUM, pm->GetComm());
-   MPI_Allreduce(&loc_z_cnt, &glob_z_cnt, 1, MPI_INT, MPI_SUM, pm->GetComm());
+   allreduce_double_buf[0] = 0.0;
+   allreduce_int_buf[0] = nzones;
+   for (int i = 0; i < nzones; i++)
+   {
+      allreduce_double_buf[0] += pm->GetElementVolume(i);
+   }
+   MPI_Allreduce(allreduce_double_buf, allreduce_double_buf + 1, 1, MPI_DOUBLE,
+                 MPI_SUM, pm->GetComm());
+   MPI_Allreduce(allreduce_int_buf, allreduce_int_buf + 1, 1, MPI_INT, MPI_SUM,
+                 pm->GetComm());
    switch (pm->GetElementBaseGeometry(0))
    {
       case Geometry::SEGMENT:
-         quad_data.h0 = glob_area / glob_z_cnt; break;
+         quad_data.h0 = allreduce_double_buf[1] / allreduce_int_buf[1]; break;
       case Geometry::SQUARE:
-         quad_data.h0 = sqrt(glob_area / glob_z_cnt); break;
+         quad_data.h0 = sqrt(allreduce_double_buf[1] / allreduce_int_buf[1]);
+         break;
       case Geometry::TRIANGLE:
-         quad_data.h0 = sqrt(2.0 * glob_area / glob_z_cnt); break;
+         quad_data.h0 = sqrt(2.0 * allreduce_double_buf[1] /
+                             allreduce_int_buf[1]);
+         break;
       case Geometry::CUBE:
-         quad_data.h0 = pow(glob_area / glob_z_cnt, 1.0/3.0); break;
+         quad_data.h0 = pow(allreduce_double_buf[1] / allreduce_int_buf[1],
+                            1.0/3.0);
+         break;
       case Geometry::TETRAHEDRON:
-         quad_data.h0 = pow(6.0 * glob_area / glob_z_cnt, 1.0/3.0); break;
+         quad_data.h0 = pow(6.0 * allreduce_double_buf[1] /
+                            allreduce_int_buf[1], 1.0/3.0);
+         break;
       default: MFEM_ABORT("Unknown zone type!");
    }
    quad_data.h0 /= (double) H1FESpace.GetOrder(0);
@@ -356,11 +373,10 @@ double LagrangianHydroOperator::GetTimeStepEstimate(const Vector &S) const
    x.MakeRef(&H1FESpace, *sptr, 0);
    H1FESpace.GetParMesh()->NewNodes(x, false);
    UpdateQuadratureData(S);
-
-   double glob_dt_est;
-   MPI_Allreduce(&quad_data.dt_est, &glob_dt_est, 1, MPI_DOUBLE, MPI_MIN,
-                 H1FESpace.GetParMesh()->GetComm());
-   return glob_dt_est;
+   allreduce_double_buf[0] = quad_data.dt_est;
+   MPI_Allreduce(allreduce_double_buf, allreduce_double_buf + 1, 1, MPI_DOUBLE,
+                 MPI_MIN, H1FESpace.GetParMesh()->GetComm());
+   return allreduce_double_buf[1];
 }
 
 void LagrangianHydroOperator::ResetTimeStepEstimate() const
@@ -443,6 +459,8 @@ void LagrangianHydroOperator::PrintTimingData(bool IamRoot, int steps)
 
 LagrangianHydroOperator::~LagrangianHydroOperator()
 {
+   std::free(allreduce_double_buf);
+   std::free(allreduce_int_buf);
    delete tensors1D;
 }
 

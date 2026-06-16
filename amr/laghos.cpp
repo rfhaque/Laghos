@@ -44,8 +44,8 @@
 // Test problems:
 //    p = 1  --> Sedov blast.
 
-
 #include "laghos_solver.hpp"
+#include <cstdlib>
 #include <memory>
 #include <iostream>
 #include <fstream>
@@ -53,6 +53,27 @@
 using namespace std;
 using namespace mfem;
 using namespace mfem::hydrodynamics;
+
+namespace
+{
+
+struct MainAllreduceScratch
+{
+   double *dbl;
+
+   MainAllreduceScratch()
+      : dbl(static_cast<double*>(std::malloc(2 * sizeof(double))))
+   {
+      MFEM_VERIFY(dbl != NULL, "Failed to allocate MPI_Allreduce scratch buffer.");
+   }
+
+   ~MainAllreduceScratch()
+   {
+      std::free(dbl);
+   }
+};
+
+}
 
 // Choice for the problem setup.
 int problem;
@@ -80,6 +101,7 @@ int main(int argc, char *argv[])
 {
    // Initialize MPI.
    MPI_Session mpi(argc, argv);
+   MainAllreduceScratch allreduce_scratch;
    int myid = mpi.WorldRank();
 
    // Print the banner.
@@ -546,8 +568,9 @@ int main(int argc, char *argv[])
 
       if (last_step || (ti % vis_steps) == 0)
       {
-         double loc_norm = e_gf * e_gf, tot_norm;
-         MPI_Allreduce(&loc_norm, &tot_norm, 1, MPI_DOUBLE, MPI_SUM,
+         allreduce_scratch.dbl[0] = e_gf * e_gf;
+         MPI_Allreduce(allreduce_scratch.dbl, allreduce_scratch.dbl + 1, 1,
+                       MPI_DOUBLE, MPI_SUM,
                        pmesh->GetComm());
          if (mpi.Root())
          {
@@ -556,7 +579,7 @@ int main(int argc, char *argv[])
                  << ",\tt = " << setw(5) << setprecision(4) << t
                  << ",\tdt = " << setw(5) << setprecision(6) << dt
                  << ",\t|e| = " << setprecision(10)
-                 << sqrt(tot_norm) << endl;
+                 << sqrt(allreduce_scratch.dbl[1]) << endl;
          }
 
          // Make sure all ranks have sent their 'v' solution before initiating
@@ -667,8 +690,9 @@ int main(int argc, char *argv[])
 
             // simple derefinement based on zone maximum rho in post-shock region
             double rho_max_max = rho_max.Size() ? rho_max.Max() : 0.0;
-            double threshold, loc_threshold = deref_threshold * rho_max_max;
-            MPI_Allreduce(&loc_threshold, &threshold, 1, MPI_DOUBLE, MPI_MAX,
+            allreduce_scratch.dbl[0] = deref_threshold * rho_max_max;
+            MPI_Allreduce(allreduce_scratch.dbl, allreduce_scratch.dbl + 1, 1,
+                          MPI_DOUBLE, MPI_MAX,
                           pmesh->GetComm());
 
             // make sure the blast point is never derefined
@@ -690,11 +714,13 @@ int main(int argc, char *argv[])
             }
 
             const int op = 2; // maximum value of fine elements
-            mesh_changed = pmesh->DerefineByError(rho_max, threshold,
+            mesh_changed = pmesh->DerefineByError(rho_max,
+                                                  allreduce_scratch.dbl[1],
                                                   nc_limit, op);
             if (mesh_changed && myid == 0)
             {
-               cout << "Derefined, threshold = " << threshold << endl;
+               cout << "Derefined, threshold = " << allreduce_scratch.dbl[1]
+                    << endl;
             }
          }
 

@@ -122,6 +122,8 @@ protected:
    mutable Vector zone_max_visc, zone_vgrad;
 
    mutable TimingData timer;
+   double *allreduce_double_buf;
+   int *allreduce_int_buf;
 
    void ComputeMaterialProperties(int nvalues, const double gamma[],
                                   const double rho[], const double e[],

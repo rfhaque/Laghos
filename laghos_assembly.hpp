@@ -120,9 +120,11 @@ private:
    ParBilinearForm pabf;
    int ess_tdofs_count;
    Array<int> ess_tdofs;
+   int *ess_tdofs_reduce_buf;
    OperatorPtr mass;
 public:
    MassPAOperator(ParFiniteElementSpace&, const IntegrationRule&, Coefficient&);
+   ~MassPAOperator();
    virtual void Mult(const Vector&, Vector&) const;
    void MultFull(const Vector &x, Vector &y) const { mass->Mult(x, y); }
    virtual void SetEssentialTrueDofs(Array<int>&);

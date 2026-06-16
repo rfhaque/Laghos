@@ -15,6 +15,7 @@
 // testbed platforms, in support of the nation's exascale computing imperative.
 
 #include "laghos_assembly.hpp"
+#include <cstdlib>
 #include <unordered_map>
 
 namespace mfem
@@ -87,12 +88,20 @@ MassPAOperator::MassPAOperator(ParFiniteElementSpace &pfes,
    vsize(pfes.GetVSize()),
    pabf(&pfes),
    ess_tdofs_count(0),
-   ess_tdofs(0)
+   ess_tdofs(0),
+   ess_tdofs_reduce_buf(static_cast<int*>(std::malloc(2 * sizeof(int))))
 {
+   MFEM_VERIFY(ess_tdofs_reduce_buf != NULL,
+               "Failed to allocate MPI_Allreduce scratch buffer.");
    pabf.SetAssemblyLevel(AssemblyLevel::PARTIAL);
    pabf.AddDomainIntegrator(new mfem::MassIntegrator(Q, &ir));
    pabf.Assemble();
    pabf.FormSystemMatrix(mfem::Array<int>(), mass);
+}
+
+MassPAOperator::~MassPAOperator()
+{
+   std::free(ess_tdofs_reduce_buf);
 }
 
 void MassPAOperator::SetEssentialTrueDofs(Array<int> &dofs)
@@ -100,10 +109,12 @@ void MassPAOperator::SetEssentialTrueDofs(Array<int> &dofs)
    ess_tdofs_count = dofs.Size();
    if (ess_tdofs.Size() == 0)
    {
-      int ess_tdofs_sz;
-      MPI_Allreduce(&ess_tdofs_count,&ess_tdofs_sz, 1, MPI_INT, MPI_SUM, comm);
-      MFEM_ASSERT(ess_tdofs_sz > 0, "ess_tdofs_sz should be positive!");
-      ess_tdofs.SetSize(ess_tdofs_sz);
+      ess_tdofs_reduce_buf[0] = ess_tdofs_count;
+      MPI_Allreduce(ess_tdofs_reduce_buf, ess_tdofs_reduce_buf + 1, 1, MPI_INT,
+                    MPI_SUM, comm);
+      MFEM_ASSERT(ess_tdofs_reduce_buf[1] > 0,
+                  "ess_tdofs_sz should be positive!");
+      ess_tdofs.SetSize(ess_tdofs_reduce_buf[1]);
    }
    if (ess_tdofs_count == 0) { return; }
    ess_tdofs = dofs;

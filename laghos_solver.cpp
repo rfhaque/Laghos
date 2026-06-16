@@ -17,6 +17,7 @@
 #include "general/forall.hpp"
 #include "laghos_solver.hpp"
 #include "linalg/kernels.hpp"
+#include <cstdlib>
 #include <unordered_map>
 
 #ifdef LAGHOS_USE_CALIPER
@@ -161,8 +162,13 @@ LagrangianHydroOperator::LagrangianHydroOperator(const int size,
    rhs(H1Vsize),
    e_rhs(L2Vsize),
    rhs_c_gf(&H1c),
-   dvc_gf(&H1c)
+   dvc_gf(&H1c),
+   allreduce_double_buf(static_cast<double*>(std::malloc(2 * sizeof(double)))),
+   allreduce_bigint_buf(
+      static_cast<HYPRE_BigInt*>(std::malloc(2 * sizeof(HYPRE_BigInt))))
 {
+   MFEM_VERIFY(allreduce_double_buf != NULL && allreduce_bigint_buf != NULL,
+               "Failed to allocate MPI_Allreduce scratch buffers.");
    block_offsets[0] = 0;
    block_offsets[1] = block_offsets[0] + H1Vsize;
    block_offsets[2] = block_offsets[1] + H1Vsize;
@@ -222,11 +228,12 @@ LagrangianHydroOperator::LagrangianHydroOperator(const int size,
 
    // Values of rho0DetJ0 and Jac0inv at all quadrature points.
    // Initial local mesh size (assumes all mesh elements are the same).
-   HYPRE_BigInt Ne, ne = NE;
-   double Volume, vol = 0.0;
+   allreduce_bigint_buf[0] = NE;
+   allreduce_double_buf[0] = 0.0;
    if (dim > 1 && p_assembly)
    {
-      Rho0DetJ0Vol(dim, NE, ir, pmesh, L2, rho0_gf, qdata, vol);
+      Rho0DetJ0Vol(dim, NE, ir, pmesh, L2, rho0_gf, qdata,
+                   allreduce_double_buf[0]);
    }
    else
    {
@@ -246,17 +253,34 @@ LagrangianHydroOperator::LagrangianHydroOperator(const int size,
             qdata.rho0DetJ0w(e*NQ + q) = rho0DetJ0 * ir.IntPoint(q).weight;
          }
       }
-      for (int e = 0; e < NE; e++) { vol += pmesh->GetElementVolume(e); }
+      for (int e = 0; e < NE; e++)
+      {
+         allreduce_double_buf[0] += pmesh->GetElementVolume(e);
+      }
    }
-   MPI_Allreduce(&vol, &Volume, 1, MPI_DOUBLE, MPI_SUM, pmesh->GetComm());
-   MPI_Allreduce(&ne, &Ne, 1, HYPRE_MPI_BIG_INT, MPI_SUM, pmesh->GetComm());
+   MPI_Allreduce(allreduce_double_buf, allreduce_double_buf + 1, 1, MPI_DOUBLE,
+                 MPI_SUM, pmesh->GetComm());
+   MPI_Allreduce(allreduce_bigint_buf, allreduce_bigint_buf + 1, 1,
+                 HYPRE_MPI_BIG_INT, MPI_SUM, pmesh->GetComm());
    switch (pmesh->GetElementBaseGeometry(0))
    {
-      case Geometry::SEGMENT: qdata.h0 = Volume / Ne; break;
-      case Geometry::SQUARE: qdata.h0 = sqrt(Volume / Ne); break;
-      case Geometry::TRIANGLE: qdata.h0 = sqrt(2.0 * Volume / Ne); break;
-      case Geometry::CUBE: qdata.h0 = pow(Volume / Ne, 1./3.); break;
-      case Geometry::TETRAHEDRON: qdata.h0 = pow(6.0 * Volume / Ne, 1./3.); break;
+      case Geometry::SEGMENT:
+         qdata.h0 = allreduce_double_buf[1] / allreduce_bigint_buf[1]; break;
+      case Geometry::SQUARE:
+         qdata.h0 = sqrt(allreduce_double_buf[1] / allreduce_bigint_buf[1]);
+         break;
+      case Geometry::TRIANGLE:
+         qdata.h0 = sqrt(2.0 * allreduce_double_buf[1] /
+                         allreduce_bigint_buf[1]);
+         break;
+      case Geometry::CUBE:
+         qdata.h0 = pow(allreduce_double_buf[1] / allreduce_bigint_buf[1],
+                        1./3.);
+         break;
+      case Geometry::TETRAHEDRON:
+         qdata.h0 = pow(6.0 * allreduce_double_buf[1] /
+                        allreduce_bigint_buf[1], 1./3.);
+         break;
       default: MFEM_ABORT("Unknown zone type!");
    }
    qdata.h0 /= (double) H1.GetOrder(0);
@@ -295,6 +319,8 @@ LagrangianHydroOperator::LagrangianHydroOperator(const int size,
 
 LagrangianHydroOperator::~LagrangianHydroOperator()
 {
+   std::free(allreduce_double_buf);
+   std::free(allreduce_bigint_buf);
    delete qupdate;
    if (p_assembly)
    {
@@ -528,10 +554,11 @@ double LagrangianHydroOperator::GetTimeStepEstimate(const Vector &S) const
 {
    UpdateMesh(S);
    UpdateQuadratureData(S);
-   double glob_dt_est;
    const MPI_Comm comm = H1.GetParMesh()->GetComm();
-   MPI_Allreduce(&qdata.dt_est, &glob_dt_est, 1, MPI_DOUBLE, MPI_MIN, comm);
-   return glob_dt_est;
+   allreduce_double_buf[0] = qdata.dt_est;
+   MPI_Allreduce(allreduce_double_buf, allreduce_double_buf + 1, 1, MPI_DOUBLE,
+                 MPI_MIN, comm);
+   return allreduce_double_buf[1];
 }
 
 void LagrangianHydroOperator::ResetTimeStepEstimate() const
@@ -639,7 +666,7 @@ double ComputeVolumeIntegral(const ParFiniteElementSpace &pfes,
 }
 double LagrangianHydroOperator::InternalEnergy(const ParGridFunction &gf) const
 {
-   double glob_ie = 0.0, internal_energy = 0.0;
+   allreduce_double_buf[0] = 0.0;
 
    if (L2.GetNE() > 0) // UsesTensorBasis does not handle empty local mesh
    {
@@ -656,19 +683,20 @@ double LagrangianHydroOperator::InternalEnergy(const ParGridFunction &gf) const
       // Get internal energy at the quadrature points
       L2r->Mult(gf, e_vec);
       L2qi->Values(e_vec, q_val);
-      internal_energy =
+      allreduce_double_buf[0] =
          ComputeVolumeIntegral(L2, dim, NE, NQ, Q1D,  1, 1.0, qdata.rho0DetJ0w, q_val);
    }
 
-   MPI_Allreduce(&internal_energy, &glob_ie, 1, MPI_DOUBLE, MPI_SUM,
+   MPI_Allreduce(allreduce_double_buf, allreduce_double_buf + 1, 1, MPI_DOUBLE,
+                 MPI_SUM,
                  L2.GetParMesh()->GetComm());
 
-   return glob_ie;
+   return allreduce_double_buf[1];
 }
 
 double LagrangianHydroOperator::KineticEnergy(const ParGridFunction &v) const
 {
-   double glob_ke = 0.0, kinetic_energy = 0.0;
+   allreduce_double_buf[0] = 0.0;
 
    if (H1.GetNE() > 0) // UsesTensorBasis does not handle empty local mesh
    {
@@ -686,14 +714,15 @@ double LagrangianHydroOperator::KineticEnergy(const ParGridFunction &v) const
       H1r->Mult(v, e_vec);
       h1_interpolator->Values(e_vec, q_val);
       // Get the IE, initial weighted mass
-      kinetic_energy =
+      allreduce_double_buf[0] =
          ComputeVolumeIntegral(H1, dim, NE, NQ, Q1D, dim, 2.0, qdata.rho0DetJ0w, q_val);
    }
 
-   MPI_Allreduce(&kinetic_energy, &glob_ke, 1, MPI_DOUBLE, MPI_SUM,
+   MPI_Allreduce(allreduce_double_buf, allreduce_double_buf + 1, 1, MPI_DOUBLE,
+                 MPI_SUM,
                  H1.GetParMesh()->GetComm());
 
-   return 0.5*glob_ke;
+   return 0.5 * allreduce_double_buf[1];
 }
 
 void LagrangianHydroOperator::PrintTimingData(bool IamRoot, int steps,

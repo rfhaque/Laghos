@@ -46,6 +46,7 @@
 // Sample runs: see README.md, section 'Verification of Results'.
 //
 
+#include <cstdlib>
 #include <fstream>
 #include <sys/time.h>
 #include <sys/resource.h>
@@ -77,6 +78,31 @@ double getDeviceMemoryHighWatermark() {
 using std::cout;
 using std::endl;
 using namespace mfem;
+
+namespace
+{
+
+struct MainAllreduceScratch
+{
+   double *dbl;
+   int *integer;
+
+   MainAllreduceScratch()
+      : dbl(static_cast<double*>(std::malloc(2 * sizeof(double)))),
+        integer(static_cast<int*>(std::malloc(2 * sizeof(int))))
+   {
+      MFEM_VERIFY(dbl != NULL && integer != NULL,
+                  "Failed to allocate MPI_Allreduce scratch buffers.");
+   }
+
+   ~MainAllreduceScratch()
+   {
+      std::free(dbl);
+      std::free(integer);
+   }
+};
+
+}
 
 // Choice for the problem setup.
 static int problem, dim;
@@ -120,6 +146,7 @@ int main(int argc, char *argv[])
 {
    // Initialize MPI.
    Mpi::Init();
+   MainAllreduceScratch allreduce_scratch;
    int myid = Mpi::WorldRank();
    Hypre::Init();
 
@@ -605,9 +632,10 @@ int main(int argc, char *argv[])
       e_coeff.SetTol(delta_tol);
       l2_e.ProjectCoefficient(e_coeff);
 
-      int non_finite = l2_e.CheckFinite();
-      MPI_Allreduce(MPI_IN_PLACE, &non_finite, 1, MPI_INT, MPI_SUM, pmesh.GetComm());
-      if (non_finite > 0)
+      allreduce_scratch.integer[0] = l2_e.CheckFinite();
+      MPI_Allreduce(allreduce_scratch.integer, allreduce_scratch.integer + 1, 1,
+                    MPI_INT, MPI_SUM, pmesh.GetComm());
+      if (allreduce_scratch.integer[1] > 0)
       {
          cout << "Delta function could not be initialized!\n";
          delete ode_solver;
@@ -791,8 +819,9 @@ int main(int argc, char *argv[])
 
       if (last_step || (ti % vis_steps) == 0)
       {
-         double lnorm = e_gf * e_gf, norm;
-         MPI_Allreduce(&lnorm, &norm, 1, MPI_DOUBLE, MPI_SUM, pmesh.GetComm());
+         allreduce_scratch.dbl[0] = e_gf * e_gf;
+         MPI_Allreduce(allreduce_scratch.dbl, allreduce_scratch.dbl + 1, 1,
+                       MPI_DOUBLE, MPI_SUM, pmesh.GetComm());
          if (mem_usage)
          {
             mem = GetMaxRssMB();
@@ -815,7 +844,7 @@ int main(int argc, char *argv[])
          // const double kinetic_energy = hydro.KineticEnergy(v_gf);
          if (Mpi::Root())
          {
-            const double sqrt_norm = sqrt(norm);
+            const double sqrt_norm = sqrt(allreduce_scratch.dbl[1]);
 
             cout << std::fixed;
             cout << "step " << std::setw(5) << ti
@@ -903,9 +932,10 @@ int main(int argc, char *argv[])
       // Problems checks
       if (check)
       {
-         double lnorm = e_gf * e_gf, norm;
-         MPI_Allreduce(&lnorm, &norm, 1, MPI_DOUBLE, MPI_SUM, pmesh.GetComm());
-         const double e_norm = sqrt(norm);
+         allreduce_scratch.dbl[0] = e_gf * e_gf;
+         MPI_Allreduce(allreduce_scratch.dbl, allreduce_scratch.dbl + 1, 1,
+                       MPI_DOUBLE, MPI_SUM, pmesh.GetComm());
+         const double e_norm = sqrt(allreduce_scratch.dbl[1]);
          MFEM_VERIFY(rs_levels == 0 && rp_levels == 0, "check: rs, rp");
          MFEM_VERIFY(order_v == 2, "check: order_v");
          MFEM_VERIFY(order_e == 1, "check: order_e");
