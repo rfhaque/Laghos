@@ -771,7 +771,7 @@ int main(int argc, char *argv[])
          t = t_old;
          S = S_old;
          hydro.ResetQuadratureData();
-         if (Mpi::Root()) { cout << "Repeating step " << ti << endl; }
+         // if (Mpi::Root()) { cout << "Repeating step " << ti << endl; }
          if (steps < max_tsteps) { last_step = false; }
          ti--; continue;
       }
@@ -935,6 +935,14 @@ int main(int argc, char *argv[])
    }
 
    hydro.PrintTimingData(Mpi::Root(), steps, fom);
+   {
+      int nranks = Mpi::WorldSize();
+      std::ofstream out(std::string("allreduce_") + std::to_string(myid) +
+                            std::string("_") + std::to_string(nranks) +
+                            std::string(".log"),
+                        std::ios_base::out | std::ios_base::trunc);
+      hydro.DumpAllReduceTimings(out);
+   }
 
    if (mem_usage)
    {
