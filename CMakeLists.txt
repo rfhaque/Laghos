@@ -24,7 +24,11 @@ endif()
 find_package(HYPRE REQUIRED)
 find_package(MFEM REQUIRED)
 find_package(MPI REQUIRED)
-find_package(RAJA REQUIRED)
+
+option(LAGHOS_USE_RAJA "Use RAJA" OFF)
+if (LAGHOS_USE_RAJA)
+  find_package(RAJA REQUIRED)
+endif()
 
 option(LAGHOS_USE_CALIPER "Use Caliper" OFF)
 if (LAGHOS_USE_CALIPER)
@@ -92,8 +96,10 @@ target_link_libraries(laghos
   PUBLIC mfem
   PUBLIC MPI::MPI_CXX
   PUBLIC HYPRE::HYPRE
-  PUBLIC RAJA
 )
+if(LAGHOS_USE_RAJA)
+  target_link_libraries(laghos PUBLIC RAJA)
+endif()
 if(LAGHOS_USE_CALIPER)
   target_link_libraries(laghos
     PUBLIC caliper
